@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytemuck = { version = "1.20.0", features = ["derive"] }
 log = "0.4.22"
 simple_logger = "5.0.0"
+tokio = { version = "1.41.1", default-features = false, features = ["rt", "rt-multi-thread"] }
 wgpu = "23.0.1"
 winit = "0.30.5"
