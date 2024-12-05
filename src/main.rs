@@ -4,18 +4,20 @@ use rusttype::{point, GlyphId, Scale};
 
 fn main() {
     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
-        *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Regular.ttf"),
+        *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
         0,
     )
     .unwrap();
 
     let rt_font = rusttype::Font::try_from_bytes(include_bytes!(
-        "/home/dacbui308/.local/share/fonts/MapleMono-NF-Regular.ttf"
+        "/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"
     ))
     .unwrap();
 
     let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 40.0);
-    renderer.add_string("you fucking suck => ->");
+    renderer.add_string(
+        "why does this shit is so shit, bruh bruh bruh -> == <=> <-> @ thomas\nas;kdljfa;lksjiu",
+    );
 
     let mut image = GrayImage::new(800, 200);
 
@@ -73,25 +75,33 @@ impl FontRenderer {
         );
 
         let baseline_y = self.rt_font.v_metrics(self.scale).ascent;
+        println!("baseline_y: {baseline_y}");
 
         let positions = glyph_buffer.get_glyph_positions();
         let infos = glyph_buffer.get_glyph_infos();
+        let max_col = self.max_width / (self.scale.x.round() / 2.0) as u32;
+        let mut _curr_col = 0;
+        let mut curr_row = 0;
 
         for (position, info) in positions.iter().zip(infos) {
             // HarfBuzz positions in 1/64th of a unit; convert to floating point
             let x_offset = position.x_offset as f32 / 64.0;
             let y_offset = position.y_offset as f32 / 64.0;
             let glyph_id = GlyphId(info.codepoint as u16);
-
-            let cluster = info.cluster as f32;
+            if info.cluster >= max_col {
+                _curr_col = info.cluster - max_col - 1;
+                curr_row = info.cluster / max_col;
+            } else {
+                _curr_col = info.cluster
+            }
 
             let glyph = self
                 .rt_font
                 .glyph(glyph_id)
                 .scaled(self.scale)
                 .positioned(point(
-                    cluster * self.scale.x / 2.0 + x_offset,
-                    baseline_y + y_offset,
+                    _curr_col as f32 * self.scale.x / 2.0 + x_offset,
+                    curr_row as f32 * self.scale.y + y_offset + baseline_y,
                 ));
 
             if let Some(round_box) = glyph.pixel_bounding_box() {
