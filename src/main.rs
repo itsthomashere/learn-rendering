@@ -14,54 +14,98 @@ fn main() {
     ))
     .unwrap();
 
-    let buffer = UnicodeBuffer::new()
-        .add_str("hello world")
-        .guess_segment_properties();
+    let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 40.0);
+    renderer.add_string("you fucking suck => ->");
 
-    let glyph_buffer = harfbuzz_rs::shape(
-        &hb_font,
-        buffer,
-        &[Feature::new(Tag::new('l', 'i', 'g', 'a'), 0, 0..)],
-    );
+    let mut image = GrayImage::new(800, 200);
 
-    let max_width = 800;
-    let max_height = 200;
+    renderer.render(|x, y, v| {
+        let pixel = image.get_pixel_mut(x as u32, y as u32);
+        *pixel = Luma([(v * 255.0) as u8]);
+    });
+    image.save("output.png").expect("could not write image");
+}
 
-    let scale = Scale::uniform(80.0);
+pub struct FontRenderer {
+    hb_font: harfbuzz_rs::Owned<harfbuzz_rs::Font<'static>>,
+    rt_font: rusttype::Font<'static>,
+    max_width: u32,
+    max_height: u32,
+    scale: Scale,
 
-    let mut image = GrayImage::new(max_width, max_height);
+    current_text: String,
+}
 
-    let baseline_y = rt_font.v_metrics(scale).ascent;
-
-    let positions = glyph_buffer.get_glyph_positions();
-    let infos = glyph_buffer.get_glyph_infos();
-
-    for (position, info) in positions.iter().zip(infos) {
-        // HarfBuzz positions in 1/64th of a unit; convert to floating point
-        let x_offset = position.x_offset as f32 / 64.0;
-        let y_offset = position.y_offset as f32 / 64.0;
-        let glyph_id = GlyphId(info.codepoint as u16);
-
-        let cluster = info.cluster as f32;
-
-        let glyph = rt_font.glyph(glyph_id).scaled(scale).positioned(point(
-            cluster * scale.x / 2.0 + x_offset,
-            baseline_y + y_offset,
-        ));
-
-        if let Some(round_box) = glyph.pixel_bounding_box() {
-            glyph.draw(|x, y, v| {
-                let x = x as i32 + round_box.min.x;
-                let y = y as i32 + round_box.min.y;
-
-                if x >= 0 && x < max_width as i32 && y >= 0 && y < max_height as i32 {
-                    let pixel = image.get_pixel_mut(x as u32, y as u32);
-                    *pixel = Luma([(v * 255.0) as u8]);
-                }
-            });
+impl FontRenderer {
+    pub fn new(
+        hb_font: harfbuzz_rs::Owned<harfbuzz_rs::Font<'static>>,
+        rt_font: rusttype::Font<'static>,
+        x: u32,
+        y: u32,
+        size: f32,
+    ) -> Self {
+        Self {
+            hb_font,
+            rt_font,
+            max_width: x,
+            max_height: y,
+            current_text: String::default(),
+            scale: Scale::uniform(size),
         }
     }
-    image.save("output.png").expect("could not write image");
+
+    pub fn add_string(&mut self, data: impl AsRef<str>) {
+        self.current_text.push_str(data.as_ref());
+    }
+
+    pub fn render<F>(&mut self, mut f: F)
+    where
+        F: FnMut(i32, i32, f32),
+    {
+        let buffer = UnicodeBuffer::new()
+            .add_str(self.current_text.as_str())
+            .guess_segment_properties();
+
+        let glyph_buffer = harfbuzz_rs::shape(
+            &self.hb_font,
+            buffer,
+            &[Feature::new(Tag::new('l', 'i', 'g', 'a'), 0, 0..)],
+        );
+
+        let baseline_y = self.rt_font.v_metrics(self.scale).ascent;
+
+        let positions = glyph_buffer.get_glyph_positions();
+        let infos = glyph_buffer.get_glyph_infos();
+
+        for (position, info) in positions.iter().zip(infos) {
+            // HarfBuzz positions in 1/64th of a unit; convert to floating point
+            let x_offset = position.x_offset as f32 / 64.0;
+            let y_offset = position.y_offset as f32 / 64.0;
+            let glyph_id = GlyphId(info.codepoint as u16);
+
+            let cluster = info.cluster as f32;
+
+            let glyph = self
+                .rt_font
+                .glyph(glyph_id)
+                .scaled(self.scale)
+                .positioned(point(
+                    cluster * self.scale.x / 2.0 + x_offset,
+                    baseline_y + y_offset,
+                ));
+
+            if let Some(round_box) = glyph.pixel_bounding_box() {
+                glyph.draw(|x, y, v| {
+                    let x = x as i32 + round_box.min.x;
+                    let y = y as i32 + round_box.min.y;
+
+                    if x >= 0 && x < self.max_width as i32 && y >= 0 && y < self.max_height as i32 {
+                        f(x, y, v)
+                    }
+                });
+            }
+        }
+    }
 }
 
 // #[derive(Default)]
