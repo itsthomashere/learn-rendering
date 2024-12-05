@@ -38,6 +38,9 @@ pub struct FontRenderer {
     current_text: String,
 }
 
+// TODO: HANDLE BITMAP RENDERING
+// TODO: HANDLE \r, \n, \t
+// TODO: HANDLE TEXTURE
 impl FontRenderer {
     pub fn new(
         hb_font: harfbuzz_rs::Owned<harfbuzz_rs::Font<'static>>,
