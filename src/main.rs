@@ -1,6 +1,6 @@
 use harfbuzz_rs::{Feature, Tag, UnicodeBuffer};
 use image::{GrayImage, Luma};
-use rusttype::{point, GlyphId, Scale};
+use rusttype::{point, Scale};
 
 fn main() {
     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
@@ -14,9 +14,9 @@ fn main() {
     ))
     .unwrap();
 
-    let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 40.0);
+    let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 32.0);
     renderer.add_string(
-        "why does this shit is so shit, bruh bruh bruh -> == <=> <-> @ thomas\nas;kdljfa;lksjiu",
+        "This is a very long line of text that extends to the other column.\nThis is a new line",
     );
 
     let mut image = GrayImage::new(800, 200);
@@ -71,13 +71,14 @@ impl FontRenderer {
             .add_str(self.current_text.as_str())
             .guess_segment_properties();
 
+        let points = buffer.codepoints().collect::<Vec<_>>();
         let glyph_buffer = harfbuzz_rs::shape(
             &self.hb_font,
             buffer,
             &[Feature::new(Tag::new('l', 'i', 'g', 'a'), 0, 0..)],
         );
 
-        let baseline_y = self.rt_font.v_metrics(self.scale).ascent;
+        let baseline_y = self.rt_font.v_metrics(self.scale).ascent.ceil();
         println!("baseline_y: {baseline_y}");
 
         let positions = glyph_buffer.get_glyph_positions();
@@ -86,21 +87,25 @@ impl FontRenderer {
         let mut _curr_col = 0;
         let mut curr_row = 0;
 
-        for (position, info) in positions.iter().zip(infos) {
-            // HarfBuzz positions in 1/64th of a unit; convert to floating point
+        for ((position, info), codepoint) in positions.iter().zip(infos).zip(points) {
             let x_offset = position.x_offset as f32 / 64.0;
             let y_offset = position.y_offset as f32 / 64.0;
-            let glyph_id = GlyphId(info.codepoint as u16);
-            if info.cluster >= max_col {
-                _curr_col = info.cluster - max_col - 1;
-                curr_row = info.cluster / max_col;
-            } else {
-                _curr_col = info.cluster
+            // let glyph_id = GlyphId(info.codepoint as u16);
+            if _curr_col >= max_col {
+                curr_row += 1;
+                _curr_col = 0;
+            }
+
+            let char = char::from_u32(codepoint);
+            if char.is_some_and(|c| c == '\n') {
+                curr_row += 1;
+                _curr_col = 0;
+                continue;
             }
 
             let glyph = self
                 .rt_font
-                .glyph(glyph_id)
+                .glyph(char::from_u32(codepoint).unwrap_or_default())
                 .scaled(self.scale)
                 .positioned(point(
                     _curr_col as f32 * self.scale.x / 2.0 + x_offset,
@@ -117,6 +122,7 @@ impl FontRenderer {
                     }
                 });
             }
+            _curr_col += 1;
         }
     }
 }
