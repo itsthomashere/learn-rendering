@@ -1,6 +1,6 @@
 use harfbuzz_rs::{Feature, Tag, UnicodeBuffer};
 use image::{GrayImage, Luma};
-use rusttype::{point, Scale};
+use rusttype::{point, GlyphId, Scale};
 
 fn main() {
     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
@@ -15,9 +15,7 @@ fn main() {
     .unwrap();
 
     let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 32.0);
-    renderer.add_string(
-        "This is a very long line of text that extends to the other column.\nThis is a new line",
-    );
+    renderer.add_string("󰣇t.This shit is gonna go out of the image boundary󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇.Lol Please just le me die,hello");
 
     let mut image = GrayImage::new(800, 200);
 
@@ -71,46 +69,55 @@ impl FontRenderer {
             .add_str(self.current_text.as_str())
             .guess_segment_properties();
 
-        let points = buffer.codepoints().collect::<Vec<_>>();
         let glyph_buffer = harfbuzz_rs::shape(
             &self.hb_font,
             buffer,
-            &[Feature::new(Tag::new('l', 'i', 'g', 'a'), 0, 0..)],
+            &[
+                Feature::new(Tag::new('l', 'i', 'g', 'a'), 1, 0..),
+                Feature::new(Tag::new('c', 'a', 'l', 't'), 1, 0..),
+            ],
         );
 
         let baseline_y = self.rt_font.v_metrics(self.scale).ascent.ceil();
-        println!("baseline_y: {baseline_y}");
 
         let positions = glyph_buffer.get_glyph_positions();
         let infos = glyph_buffer.get_glyph_infos();
         let max_col = self.max_width / (self.scale.x.round() / 2.0) as u32;
-        let mut _curr_col = 0;
-        let mut curr_row = 0;
 
-        for ((position, info), codepoint) in positions.iter().zip(infos).zip(points) {
+        let mut glyphs_with_infos = positions.iter().zip(infos).peekable();
+        let mut cur_col = 0; // current column will only increase by 1, but
+        let mut cur_row = 0;
+
+        while let Some((position, info)) = glyphs_with_infos.next() {
+            let scale_factor = match glyphs_with_infos.peek() {
+                Some((_, next_info)) => next_info.cluster - info.cluster,
+                None => 1,
+            };
             let x_offset = position.x_offset as f32 / 64.0;
             let y_offset = position.y_offset as f32 / 64.0;
-            // let glyph_id = GlyphId(info.codepoint as u16);
-            if _curr_col >= max_col {
-                curr_row += 1;
-                _curr_col = 0;
+            let glyph_id = GlyphId(info.codepoint as u16);
+
+            if cur_col >= max_col {
+                cur_col = 0;
+                cur_row += 1;
             }
 
-            let char = char::from_u32(codepoint);
-            if char.is_some_and(|c| c == '\n') {
-                curr_row += 1;
-                _curr_col = 0;
-                continue;
-            }
+            let x = cur_col as f32 * self.scale.x / 2.0 + x_offset;
+
+            let y = cur_row as f32 * self.scale.y + y_offset + baseline_y;
+            let scale = match scale_factor > 1 {
+                true => Scale {
+                    x: self.scale.x / 1.5,
+                    y: self.scale.y / 1.5,
+                },
+                false => self.scale,
+            };
 
             let glyph = self
                 .rt_font
-                .glyph(char::from_u32(codepoint).unwrap_or_default())
-                .scaled(self.scale)
-                .positioned(point(
-                    _curr_col as f32 * self.scale.x / 2.0 + x_offset,
-                    curr_row as f32 * self.scale.y + y_offset + baseline_y,
-                ));
+                .glyph(glyph_id)
+                .scaled(scale)
+                .positioned(point(x, y));
 
             if let Some(round_box) = glyph.pixel_bounding_box() {
                 glyph.draw(|x, y, v| {
@@ -122,7 +129,8 @@ impl FontRenderer {
                     }
                 });
             }
-            _curr_col += 1;
+
+            cur_col += 1;
         }
     }
 }
