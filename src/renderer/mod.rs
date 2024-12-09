@@ -46,6 +46,18 @@ impl LineBuffer {
     }
 
     pub fn append_text(&mut self, text: impl AsRef<str>, color: Color) {
+        let lines = text.as_ref().lines().collect::<Vec<_>>();
+        if lines.len() <= 1 {
+            self.inner_append_text(text, color);
+        } else {
+            for line in lines {
+                self.lines.push(TextLine::new());
+                self.inner_append_text(line, color.clone());
+            }
+        }
+    }
+
+    fn inner_append_text(&mut self, text: impl AsRef<str>, color: Color) {
         let str_len = text.as_ref().len() as u32;
         if self.can_fit(str_len) {
             match self.lines.last_mut() {

@@ -28,6 +28,7 @@ fn main() {
     };
     line_buffer.append_text("What the fuck.", color_1.clone());
     line_buffer.append_text("Is this", color_1.clone());
+    line_buffer.append_text("What\nI print this new line hehe", color_1.clone());
 
     let background_color = Rgba([0, 0, 0, 255]); // Black background
 
