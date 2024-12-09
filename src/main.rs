@@ -1,30 +1,47 @@
 use harfbuzz_rs::{Feature, Tag, UnicodeBuffer};
-use image::{GrayImage, Luma};
+use learn_rendering::renderer::LineBuffer;
+use learn_rendering::Color;
 use rusttype::{point, GlyphId, Scale};
 
 fn main() {
-    let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
-        *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
-        0,
-    )
-    .unwrap();
+    let scale = Scale::uniform(32.0);
+    let max_x = 160;
+    let max_y = 160;
+    let mut line_buffer = LineBuffer::new(scale, 0, 0, max_x, max_y);
 
-    let rt_font = rusttype::Font::try_from_bytes(include_bytes!(
-        "/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"
-    ))
-    .unwrap();
-
-    let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 32.0);
-    renderer.add_string("󰣇t.This shit is gonna go out of the image boundary󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇.Lol Please just le me die,hello");
-
-    let mut image = GrayImage::new(800, 200);
-
-    renderer.render(|x, y, v| {
-        let pixel = image.get_pixel_mut(x as u32, y as u32);
-        *pixel = Luma([(v * 255.0) as u8]);
-    });
-    image.save("output.png").expect("could not write image");
+    let color_1 = Color {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    line_buffer.append_text("12345678901", color_1.clone());
+    line_buffer.append_text("2345678901", color_1.clone());
+    println!("line buffer {line_buffer:#?}");
 }
+// fn main() {
+//     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
+//         *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
+//         0,
+//     )
+//     .unwrap();
+//
+//     let rt_font = rusttype::Font::try_from_bytes(include_bytes!(
+//         "/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"
+//     ))
+//     .unwrap();
+//
+//     let mut renderer = FontRenderer::new(hb_font, rt_font, 800, 200, 32.0);
+//     renderer.add_string("󰣇t.This shit is gonna go out of the image boundary󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇󰣇.Lol Please just le me die,hello");
+//
+//     let mut image = GrayImage::new(800, 200);
+//
+//     renderer.render(|x, y, v| {
+//         let pixel = image.get_pixel_mut(x as u32, y as u32);
+//         *pixel = Luma([(v * 255.0) as u8]);
+//     });
+//     image.save("output.png").expect("could not write image");
+// }
 
 pub struct FontRenderer {
     hb_font: harfbuzz_rs::Owned<harfbuzz_rs::Font<'static>>,
