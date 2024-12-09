@@ -16,19 +16,43 @@ fn main() {
     ))
     .unwrap();
     let scale = Scale::uniform(32.0);
-    let max_x = 320;
-    let max_y = 320;
+    let max_x = 1280;
+    let max_y = 960;
     let mut line_buffer = LineBuffer::new(scale, 0, 0, max_x, max_y);
 
     let color_1 = Color {
-        r: 255,
-        g: 255,
+        r: 0,
+        g: 204,
+        b: 120,
+        a: 255,
+    };
+
+    let color_2 = Color {
+        r: 51,
+        g: 51,
         b: 255,
         a: 255,
     };
-    line_buffer.append_text("What the fuck.", color_1.clone());
-    line_buffer.append_text("Is this", color_1.clone());
-    line_buffer.append_text("What\nI print this new line hehe", color_1.clone());
+
+    let color_3 = Color {
+        r: 255,
+        g: 0,
+        b: 127,
+        a: 255,
+    };
+
+    line_buffer.append_text("This is the first line.\n", color_1.clone());
+    line_buffer.append_text("This is the second line\n", color_2.clone());
+    line_buffer.append_text("What.\nThis is the third line\n", color_3.clone());
+    line_buffer.append_text(
+        "This is a buch of icons: 󰣇",
+        Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        },
+    );
 
     let background_color = Rgba([0, 0, 0, 255]); // Black background
 

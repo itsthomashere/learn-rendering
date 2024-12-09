@@ -45,13 +45,17 @@ impl LineBuffer {
         }
     }
 
+    // TODO: Implement line wrap
     pub fn append_text(&mut self, text: impl AsRef<str>, color: Color) {
-        let lines = text.as_ref().lines().collect::<Vec<_>>();
-        if lines.len() <= 1 {
-            self.inner_append_text(text, color);
-        } else {
-            for line in lines {
+        let lines = text
+            .as_ref()
+            .split_inclusive(|ch: char| ch == '\n' || ch.is_whitespace())
+            .collect::<Vec<_>>();
+        for line in lines {
+            if line.contains('\n') {
+                line.strip_suffix('\n').unwrap();
                 self.lines.push(TextLine::new());
+            } else {
                 self.inner_append_text(line, color.clone());
             }
         }
@@ -175,12 +179,13 @@ impl LineBuffer {
                 let x = (curr_col * self.text_width) as f32 + x_offset;
                 let y = y_offset + start_y as f32;
 
-                let scale = match scale_factor > 1 {
-                    true => Scale {
-                        x: self.scale.x / 1.5,
-                        y: self.scale.y / 1.5,
-                    },
-                    false => self.scale,
+                let scale_factor = match scale_factor > 1 {
+                    true => 1.0 / (1.0 + scale_factor as f32 * 0.1),
+                    false => 1.0,
+                };
+                let scale = Scale {
+                    x: self.scale.x * scale_factor,
+                    y: self.scale.y * scale_factor,
                 };
 
                 let glyph = rt_font
