@@ -1,4 +1,11 @@
 use crate::Color;
+use harfbuzz_rs::Feature;
+use harfbuzz_rs::Font as HbFont;
+use harfbuzz_rs::Tag;
+use harfbuzz_rs::UnicodeBuffer;
+use rusttype::point;
+use rusttype::Font as RtFont;
+use rusttype::GlyphId;
 use rusttype::Scale;
 
 pub struct Renderer {}
@@ -97,6 +104,93 @@ impl LineBuffer {
             None => 0,
         }
     }
+
+    pub fn render_all<F>(
+        &self,
+        hb_font: &harfbuzz_rs::Owned<HbFont<'static>>,
+        rt_font: &RtFont<'static>,
+        mut f: F,
+    ) where
+        F: FnMut(i32, i32, f32, Color),
+    {
+        println!("len: {}", self.lines.len());
+        for i in 0..self.lines.len() {
+            self.render_line(i, hb_font, rt_font, &mut f);
+        }
+    }
+
+    pub fn render_line<F>(
+        &self,
+        index: usize,
+        hb_font: &harfbuzz_rs::Owned<HbFont<'static>>,
+        rt_font: &RtFont<'static>,
+        f: &mut F,
+    ) where
+        F: FnMut(i32, i32, f32, Color),
+    {
+        let line = match self.lines.get(index) {
+            Some(line) => line,
+            None => return,
+        };
+        let start_y = (index + 1) as u32 * self.line_height;
+        let mut curr_col = 0;
+        line.batches.iter().for_each(|batch| {
+            let text = &batch.text;
+            let color = &batch.color;
+            let buffer = UnicodeBuffer::new()
+                .add_str(text)
+                .guess_segment_properties();
+            let glyph_buffer = harfbuzz_rs::shape(
+                hb_font,
+                buffer,
+                &[
+                    Feature::new(Tag::new('l', 'i', 'g', 'a'), 1, 0..),
+                    Feature::new(Tag::new('c', 'a', 'l', 't'), 1, 0..),
+                ],
+            );
+            let positions = glyph_buffer.get_glyph_positions();
+            let infos = glyph_buffer.get_glyph_infos();
+            let mut iter = positions.iter().zip(infos).peekable();
+            while let Some((position, info)) = iter.next() {
+                let scale_factor = match iter.peek() {
+                    Some((_, next_info)) => next_info.cluster - info.cluster,
+                    None => 1,
+                };
+                let x_offset = position.x_offset as f32 / 64.0;
+                let y_offset = position.y_offset as f32 / 64.0;
+                let glyph_id = GlyphId(info.codepoint as u16);
+
+                let x = (curr_col * self.text_width) as f32 + x_offset;
+                let y = y_offset + start_y as f32;
+
+                let scale = match scale_factor > 1 {
+                    true => Scale {
+                        x: self.scale.x / 1.5,
+                        y: self.scale.y / 1.5,
+                    },
+                    false => self.scale,
+                };
+
+                let glyph = rt_font
+                    .glyph(glyph_id)
+                    .scaled(scale)
+                    .positioned(point(x, y));
+
+                if let Some(round_box) = glyph.pixel_bounding_box() {
+                    glyph.draw(|x, y, v| {
+                        let x = x as i32 + round_box.min.x;
+                        let y = y as i32 + round_box.min.y;
+
+                        if x >= 0 && x < self.max_x as i32 && y >= 0 && y < self.max_y as i32 {
+                            f(x, y, v, color.clone())
+                        }
+                    });
+                }
+
+                curr_col += 1;
+            }
+        });
+    }
 }
 
 /// Text represented in a line
@@ -183,8 +277,8 @@ impl TextBatch {
     pub fn add_text(&mut self, text: impl AsRef<str>) {
         self.text.push_str(text.as_ref());
     }
-    pub fn len(&self) -> usize {
-        self.text.len()
+    pub fn len(&self) -> u32 {
+        self.text.len() as u32
     }
 
     pub fn is_empty(&self) -> bool {

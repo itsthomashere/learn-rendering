@@ -1,12 +1,23 @@
 use harfbuzz_rs::{Feature, Tag, UnicodeBuffer};
+use image::{ImageBuffer, Rgba, RgbaImage};
 use learn_rendering::renderer::LineBuffer;
 use learn_rendering::Color;
 use rusttype::{point, GlyphId, Scale};
 
 fn main() {
+    let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
+        *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
+        0,
+    )
+    .unwrap();
+
+    let rt_font = rusttype::Font::try_from_bytes(include_bytes!(
+        "/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"
+    ))
+    .unwrap();
     let scale = Scale::uniform(32.0);
-    let max_x = 160;
-    let max_y = 160;
+    let max_x = 320;
+    let max_y = 320;
     let mut line_buffer = LineBuffer::new(scale, 0, 0, max_x, max_y);
 
     let color_1 = Color {
@@ -15,11 +26,38 @@ fn main() {
         b: 255,
         a: 255,
     };
-    line_buffer.append_text("12345678901", color_1.clone());
-    line_buffer.append_text("2345678901", color_1.clone());
-    println!("line buffer {line_buffer:#?}");
+    line_buffer.append_text("What the fuck.", color_1.clone());
+    line_buffer.append_text("Is this", color_1.clone());
+
+    let background_color = Rgba([0, 0, 0, 255]); // Black background
+
+    let mut image: RgbaImage = ImageBuffer::from_fn(max_x, max_y, |_, _| background_color);
+
+    line_buffer.render_all(&hb_font, &rt_font, |x, y, v, color| {
+        let pixel = image.get_pixel_mut(x as u32, y as u32);
+        let fg = Rgba([
+            color.r,
+            color.g,
+            color.b,
+            (v * color.a as f32) as u8, // Use alpha channel scaled by `v`
+        ]);
+        *pixel = blend_colors(*pixel, fg, v); // Blend for smoother edges
+    });
+    image.save("output.png").expect("could not write image");
 }
-// fn main() {
+
+fn blend_colors(bg: Rgba<u8>, fg: Rgba<u8>, intensity: f32) -> Rgba<u8> {
+    let alpha = intensity; // Use glyph intensity as alpha
+    let inv_alpha = 1.0 - alpha;
+
+    Rgba([
+        (fg[0] as f32 * alpha + bg[0] as f32 * inv_alpha) as u8,
+        (fg[1] as f32 * alpha + bg[1] as f32 * inv_alpha) as u8,
+        (fg[2] as f32 * alpha + bg[2] as f32 * inv_alpha) as u8,
+        255,
+    ])
+}
+
 //     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
 //         *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
 //         0,
