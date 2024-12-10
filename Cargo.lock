@@ -1031,6 +1031,7 @@ dependencies = [
  "harfbuzz_rs",
  "image",
  "log",
+ "rayon",
  "rusttype",
  "simple_logger",
  "tokio",

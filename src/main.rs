@@ -3,6 +3,7 @@ use image::{ImageBuffer, Rgba, RgbaImage};
 use learn_rendering::renderer::LineBuffer;
 use learn_rendering::Color;
 use rusttype::{point, GlyphId, Scale};
+use std::time::{Duration, Instant};
 
 fn main() {
     let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
@@ -41,11 +42,18 @@ fn main() {
         a: 255,
     };
 
+    let instant = Instant::now();
     line_buffer.append_text("This is the first line.\n", color_1.clone());
     line_buffer.append_text("This is the second line\n", color_2.clone());
     line_buffer.append_text("What.\nThis is the third line\n", color_3.clone());
+    line_buffer.insert_at(
+        1,
+        3,
+        " More line 12345678909876543212345678909876543211234567890123456",
+        color_1.clone(),
+    );
     line_buffer.append_text(
-        "This is a buch of icons: 󰣇",
+        "This is a buch of icons: 󰣇\n",
         Color {
             r: 255,
             g: 255,
@@ -53,6 +61,8 @@ fn main() {
             a: 255,
         },
     );
+    line_buffer.append_text("More text", color_1);
+    println!("append text time: {}", instant.elapsed().as_micros());
 
     let background_color = Rgba([0, 0, 0, 255]); // Black background
 
@@ -60,13 +70,8 @@ fn main() {
 
     line_buffer.render_all(&hb_font, &rt_font, |x, y, v, color| {
         let pixel = image.get_pixel_mut(x as u32, y as u32);
-        let fg = Rgba([
-            color.r,
-            color.g,
-            color.b,
-            (v * color.a as f32) as u8, // Use alpha channel scaled by `v`
-        ]);
-        *pixel = blend_colors(*pixel, fg, v); // Blend for smoother edges
+        let fg = Rgba([color.r, color.g, color.b, (v * color.a as f32) as u8]);
+        *pixel = blend_colors(*pixel, fg, v);
     });
     image.save("output.png").expect("could not write image");
 }
