@@ -2,8 +2,11 @@ use gnahc::data::grids::Grid;
 use gnahc::data::Attribute;
 use gnahc::data::Cell;
 use gnahc::data::Color;
+use gnahc::data::ANSI_256;
 use gnahc_vte::ansi::ControlFunction;
+use gnahc_vte::ansi::Editing;
 use gnahc_vte::ansi::TextProc;
+use gnahc_vte::ansi::Visual;
 use gnahc_vte::Handler;
 use harfbuzz_rs::{Feature, Font as HbFont, Tag, UnicodeBuffer};
 use rusttype::{point, Font as RtFont, GlyphId, Scale};
@@ -15,8 +18,8 @@ impl Handler for Renderer {
             ControlFunction::Print(c) => {
                 self.buf.push(Cell {
                     c,
-                    fg: self.fg.clone(),
-                    bg: self.bg.clone(),
+                    fg: self.fg,
+                    bg: self.bg,
                     attr: Attribute::default(),
                     sixel_data: None,
                 });
@@ -33,61 +36,134 @@ impl Handler for Renderer {
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
-            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+            ControlFunction::TextProc(TextProc::ReverseIndex) => {
+                self.buffer.cursor_mut().y -= 1;
+            }
+            ControlFunction::TextProc(TextProc::LineFeed) => {
                 self.buffer.input(std::mem::take(&mut self.buf), |_| true);
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
+            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+                self.buffer.cursor_mut().x = 0;
+            }
             c => {
-                println!("{:?}", c)
+                // println!("{:?}", c)
             }
         }
     }
 
     fn esc_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
         let control: ControlFunction = consume.into();
+        // println!("esc dispatch {:?}", control);
         match control {
             ControlFunction::StringTerminator => {
                 self.buffer.input(std::mem::take(&mut self.buf), |_| true);
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
-            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+            ControlFunction::TextProc(TextProc::LineFeed) => {
                 self.buffer.input(std::mem::take(&mut self.buf), |_| true);
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
-            c => {
-                println!("{:?}", c)
+            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+                self.buffer.cursor_mut().x = 0;
             }
+            c => {}
         }
     }
 
     fn csi_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
         let control: ControlFunction = consume.into();
+        // println!("csi dispatch {:?}", control);
         match control {
             ControlFunction::StringTerminator => {
                 self.buffer.input(std::mem::take(&mut self.buf), |_| true);
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
-            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+            ControlFunction::TextProc(TextProc::LineFeed) => {
                 self.buffer.input(std::mem::take(&mut self.buf), |_| true);
                 self.buffer.cursor_mut().y += 1;
                 self.buffer.cursor_mut().x = 0;
             }
-            c => {
-                println!("{:?}", c)
+            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+                self.buffer.cursor_mut().x = 0;
             }
+            ControlFunction::Editing(Editing::EraseInLine(e)) => match e {
+                0 => {
+                    let y = self.buffer.cursor().y;
+                    let x = self.buffer.cursor().x;
+                    self.fg = self.colorscheme[7];
+                    self.bg = self.colorscheme[0];
+                    if let Some(row) = self.buffer.visible_iter_mut().nth(y) {
+                        for val in row.iter_mut().skip(x) {
+                            val.fg = self.colorscheme[7];
+                            val.bg = self.colorscheme[0];
+                        }
+                    }
+                }
+                1 => {}
+                2 => {}
+                _ => eprintln!("invalid Erase In Line value"),
+            },
+            ControlFunction::Editing(Editing::EraseInDisplay(e)) => match e {
+                0 => {
+                    let y = self.buffer.cursor().y;
+                    let x = self.buffer.cursor().x;
+                    self.fg = self.colorscheme[7];
+                    self.bg = self.colorscheme[0];
+                    if let Some(row) = self.buffer.visible_iter_mut().nth(y) {
+                        for val in row.iter_mut().skip(x) {
+                            val.fg = self.colorscheme[7];
+                            val.bg = self.colorscheme[0];
+                        }
+                    }
+                    for row in self.buffer.visible_iter_mut().skip(y) {
+                        for val in row.iter_mut() {
+                            val.fg = self.colorscheme[7];
+                            val.bg = self.colorscheme[0];
+                        }
+                    }
+                }
+                1 => {}
+                2 => {}
+                _ => eprintln!("invalid Erase In Line value"),
+            },
+            ControlFunction::Visual(Visual::GraphicRendition(g)) => {
+                // println!("{g:?}");
+                if g.first().is_some_and(|val| val == &0) {
+                    self.fg = self.colorscheme[7];
+                    self.bg = self.colorscheme[0];
+                }
+                if g.get(1).is_some_and(|val| (&30..=&49).contains(&val)) {
+                    let code = g.get(1).unwrap();
+                    if (30..=37).contains(code) {
+                        // Foreground colors
+                        let index = (code - 30) as usize;
+                        self.fg = self.colorscheme[index];
+                    } else if (40..=47).contains(code) {
+                        // Background colors
+                        let index = (code - 40) as usize;
+                        self.bg = self.colorscheme[index];
+                    } else if code == &38 && g.get(2).is_some_and(|v| v == &5) {
+                        if let Some(index) = g.get(3) {
+                            self.fg = ANSI_256[*index as usize];
+                        }
+                    }
+                }
+            }
+            c => {}
         }
     }
 
     fn hook(&mut self, consume: gnahc_vte::VtConsume) {
-        println!("{:?}", consume);
+        println!("dsc hook {:?}", consume);
     }
 
     fn put(&mut self, consume: gnahc_vte::VtConsume) {
-        println!("{:?}", consume);
+        println!("dscput {:?}", consume);
     }
 
     fn unhook(&mut self) {
@@ -95,7 +171,7 @@ impl Handler for Renderer {
     }
 
     fn osc_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
-        println!("{:?}", consume);
+        println!("osc dispatch {:?}", consume);
     }
 }
 
@@ -113,11 +189,19 @@ pub struct Renderer {
     scale: Scale,
 
     pub buffer: Grid<Cell>,
+    colorscheme: [Color; 16],
     buf: Vec<Cell>,
 }
 
 impl Renderer {
-    pub fn new(scale: Scale, min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> Self {
+    pub fn new(
+        scale: Scale,
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+        colorscheme: [Color; 16],
+    ) -> Self {
         let line_height = scale.y.round() as u32;
         let text_width = (scale.x / 2.0).round() as u32;
         let max_col = (max_x - min_x) / text_width;
@@ -146,6 +230,7 @@ impl Renderer {
                 a: 255,
             },
             buf: Vec::with_capacity(50),
+            colorscheme,
         }
     }
 
@@ -166,12 +251,7 @@ impl Render for Renderer {
         if !self.buf.is_empty() {
             self.buffer.input(std::mem::take(&mut self.buf), |_| true);
         }
-        for (i, _) in self
-            .buffer
-            .visible_iter()
-            .enumerate()
-            .filter(|(_, row)| !row.is_empty())
-        {
+        for (i, _) in self.buffer.visible_iter().enumerate() {
             self.render_line(i, hb_font, rt_font, &mut f);
         }
     }
@@ -186,6 +266,7 @@ impl Render for Renderer {
         F: FnMut(i32, i32, f32, Color),
     {
         let line = match self.buffer.visible_iter().nth(index) {
+            Some(line) if line.is_empty() => return,
             Some(line) => line,
             None => return,
         };
@@ -265,7 +346,7 @@ impl Render for Renderer {
                         let y = y as i32 + round_box.min.y;
 
                         if x >= 0 && x < self.max_x as i32 && y >= 0 && y < self.max_y as i32 {
-                            f(x, y, v, color.clone())
+                            f(x, y, v, *color)
                         }
                     });
                 }
