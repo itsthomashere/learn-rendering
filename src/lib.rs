@@ -1,3 +1,4 @@
+pub mod display;
 pub mod renderer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

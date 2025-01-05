@@ -1,18 +1,23 @@
-use gnahc::data::grids::Grid;
-use gnahc::data::Attribute;
-use gnahc::data::Cell;
-use gnahc::data::Color;
-use gnahc::data::ANSI_256;
-use gnahc_vte::ansi::ControlFunction;
-use gnahc_vte::ansi::Editing;
-use gnahc_vte::ansi::TextProc;
-use gnahc_vte::ansi::Visual;
-use gnahc_vte::Handler;
 use harfbuzz_rs::{Feature, Font as HbFont, Tag, UnicodeBuffer};
 use rusttype::{point, Font as RtFont, GlyphId, Scale};
+use term::data::grids::Grid;
+use term::data::Attribute;
+use term::data::Cell;
+use term::data::Color;
+use term::data::RGBA;
+use vte::ansi::Audible;
+use vte::ansi::ControlFunction;
+use vte::ansi::Editing;
+use vte::ansi::GraphicCharset;
+use vte::ansi::Management;
+use vte::ansi::Synchronization;
+use vte::ansi::TextProc;
+use vte::ansi::Visual;
+use vte::Handler;
+use winit::dpi::PhysicalSize;
 
 impl Handler for Renderer {
-    fn print(&mut self, consume: gnahc_vte::VtConsume) {
+    fn print(&mut self, consume: vte::VtConsume) {
         let control: ControlFunction = consume.into();
         match control {
             ControlFunction::Print(c) => {
@@ -22,59 +27,26 @@ impl Handler for Renderer {
                     bg: self.bg,
                     attr: Attribute::default(),
                     sixel_data: None,
+                    dirty: true,
+                    erasable: true,
                 });
             }
             _ => unreachable!(),
         }
     }
 
-    fn execute(&mut self, consume: gnahc_vte::VtConsume) {
+    fn execute(&mut self, consume: vte::VtConsume) {
         let control: ControlFunction = consume.into();
-        match control {
-            ControlFunction::StringTerminator => {
-                self.buffer.input(std::mem::take(&mut self.buf), |_| true);
-                self.buffer.cursor_mut().y += 1;
-                self.buffer.cursor_mut().x = 0;
-            }
-            ControlFunction::TextProc(TextProc::ReverseIndex) => {
-                self.buffer.cursor_mut().y -= 1;
-            }
-            ControlFunction::TextProc(TextProc::LineFeed) => {
-                self.buffer.input(std::mem::take(&mut self.buf), |_| true);
-                self.buffer.cursor_mut().y += 1;
-                self.buffer.cursor_mut().x = 0;
-            }
-            ControlFunction::TextProc(TextProc::CarriageReturn) => {
-                self.buffer.cursor_mut().x = 0;
-            }
-            c => {
-                // println!("{:?}", c)
-            }
-        }
+        self.execute_control(control);
     }
 
-    fn esc_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
+    fn esc_dispatch(&mut self, consume: vte::VtConsume) {
         let control: ControlFunction = consume.into();
         // println!("esc dispatch {:?}", control);
-        match control {
-            ControlFunction::StringTerminator => {
-                self.buffer.input(std::mem::take(&mut self.buf), |_| true);
-                self.buffer.cursor_mut().y += 1;
-                self.buffer.cursor_mut().x = 0;
-            }
-            ControlFunction::TextProc(TextProc::LineFeed) => {
-                self.buffer.input(std::mem::take(&mut self.buf), |_| true);
-                self.buffer.cursor_mut().y += 1;
-                self.buffer.cursor_mut().x = 0;
-            }
-            ControlFunction::TextProc(TextProc::CarriageReturn) => {
-                self.buffer.cursor_mut().x = 0;
-            }
-            c => {}
-        }
+        self.execute_control(control);
     }
 
-    fn csi_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
+    fn csi_dispatch(&mut self, consume: vte::VtConsume) {
         let control: ControlFunction = consume.into();
         // println!("csi dispatch {:?}", control);
         match control {
@@ -91,78 +63,267 @@ impl Handler for Renderer {
             ControlFunction::TextProc(TextProc::CarriageReturn) => {
                 self.buffer.cursor_mut().x = 0;
             }
-            ControlFunction::Editing(Editing::EraseInLine(e)) => match e {
-                0 => {
-                    let y = self.buffer.cursor().y;
-                    let x = self.buffer.cursor().x;
-                    self.fg = self.colorscheme[7];
-                    self.bg = self.colorscheme[0];
-                    if let Some(row) = self.buffer.visible_iter_mut().nth(y) {
-                        for val in row.iter_mut().skip(x) {
-                            val.fg = self.colorscheme[7];
-                            val.bg = self.colorscheme[0];
-                        }
-                    }
-                }
-                1 => {}
-                2 => {}
-                _ => eprintln!("invalid Erase In Line value"),
+            ControlFunction::Visual(v) => match v {
+                Visual::DarkMode(d) => self.dark_mode = d,
+                Visual::GraphicRendition(vec) => self.rendition(vec),
+                _ => {}
             },
-            ControlFunction::Editing(Editing::EraseInDisplay(e)) => match e {
-                0 => {
-                    let y = self.buffer.cursor().y;
-                    let x = self.buffer.cursor().x;
-                    self.fg = self.colorscheme[7];
-                    self.bg = self.colorscheme[0];
-                    if let Some(row) = self.buffer.visible_iter_mut().nth(y) {
-                        for val in row.iter_mut().skip(x) {
-                            val.fg = self.colorscheme[7];
-                            val.bg = self.colorscheme[0];
+            ControlFunction::Editing(e) => match e {
+                Editing::DeleteCharacter(_) => {}
+                Editing::DeleteCol(_) => {}
+                Editing::DeleteLine(_) => {}
+                Editing::EraseInDisplay(flag) => match flag {
+                    0 => {
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        // Clear the current line first
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut().skip(x).for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
+                        }
+                        for row in self.buffer.visible_iter_mut().skip(y) {
+                            row.iter_mut().for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
                         }
                     }
-                    for row in self.buffer.visible_iter_mut().skip(y) {
-                        for val in row.iter_mut() {
-                            val.fg = self.colorscheme[7];
-                            val.bg = self.colorscheme[0];
+                    1 => {
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        // Clear the current line first
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut().skip(x).for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
+                        }
+                        for row in self.buffer.visible_iter_mut().take(y - 1) {
+                            row.iter_mut().for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
                         }
                     }
-                }
-                1 => {}
-                2 => {}
-                _ => eprintln!("invalid Erase In Line value"),
+                    2 => {
+                        for row in self.buffer.visible_iter_mut() {
+                            row.iter_mut().for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
+                        }
+                    }
+                    _ => {}
+                },
+                Editing::SelectiveEraseDisplay(flag) => match flag {
+                    0 => {
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        // Clear the current line first
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut()
+                                .skip(x)
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                        for row in self.buffer.visible_iter_mut().skip(y) {
+                            row.iter_mut()
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                    }
+                    1 => {
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        // Clear the current line first
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut()
+                                .skip(x)
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                        for row in self.buffer.visible_iter_mut().take(y - 1) {
+                            row.iter_mut()
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                    }
+                    2 => {
+                        for row in self.buffer.visible_iter_mut() {
+                            row.iter_mut()
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                    }
+                    _ => {}
+                },
+                Editing::EraseInLine(flag) => match flag {
+                    0 => {
+                        // Erase from the begining up until the cursor
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        self.reset_graphic();
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut().skip(x).for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
+                        }
+                    }
+                    1 => {
+                        // clear from the beginning to the cursor
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut().take(x).for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            });
+                        }
+                    }
+                    2 => {
+                        let y = self.buffer.cursor().y;
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut().for_each(|cell| {
+                                cell.c = ' ';
+                                cell.dirty = true;
+                                cell.bg = Color::IndexBase(0);
+                                cell.fg = Color::IndexBase(7);
+                                cell.attr = Attribute::default();
+                            })
+                        }
+                    }
+                    _ => {}
+                },
+                Editing::SelectiveEraseLine(flag) => match flag {
+                    0 => {
+                        // Erase from the begining up until the cursor
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        self.reset_graphic();
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut()
+                                .skip(x)
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                    }
+                    1 => {
+                        // clear from the beginning to the cursor
+                        let x = self.buffer.cursor().x;
+                        let y = self.buffer.cursor().y;
+                        self.reset_graphic();
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut()
+                                .take(x)
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                });
+                        }
+                    }
+                    2 => {
+                        let y = self.buffer.cursor().y;
+                        self.reset_graphic();
+                        if let Some(row) = self.buffer.line_mut(y) {
+                            row.iter_mut()
+                                .take_while(|cell| cell.erasable)
+                                .for_each(|cell| {
+                                    cell.c = ' ';
+                                    cell.dirty = true;
+                                    cell.bg = Color::IndexBase(0);
+                                    cell.fg = Color::IndexBase(7);
+                                    cell.attr = Attribute::default();
+                                })
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
             },
-            ControlFunction::Visual(Visual::GraphicRendition(g)) => {
-                // println!("{g:?}");
-                if g.first().is_some_and(|val| val == &0) {
-                    self.fg = self.colorscheme[7];
-                    self.bg = self.colorscheme[0];
+            ControlFunction::TextProc(t) => match t {
+                TextProc::SaveCursor | TextProc::SaveCursorPosition => {
+                    self.buffer.save_cursor();
                 }
-                if g.get(1).is_some_and(|val| (&30..=&49).contains(&val)) {
-                    let code = g.get(1).unwrap();
-                    if (30..=37).contains(code) {
-                        // Foreground colors
-                        let index = (code - 30) as usize;
-                        self.fg = self.colorscheme[index];
-                    } else if (40..=47).contains(code) {
-                        // Background colors
-                        let index = (code - 40) as usize;
-                        self.bg = self.colorscheme[index];
-                    } else if code == &38 && g.get(2).is_some_and(|v| v == &5) {
-                        if let Some(index) = g.get(3) {
-                            self.fg = ANSI_256[*index as usize];
-                        }
-                    }
+                TextProc::RestoreCursor | TextProc::RestoreSavedCursor => {
+                    self.buffer.restore_cursor();
                 }
-            }
+                _ => {}
+            },
+            _ => {}
+
             c => {}
         }
     }
 
-    fn hook(&mut self, consume: gnahc_vte::VtConsume) {
+    fn hook(&mut self, consume: vte::VtConsume) {
         println!("dsc hook {:?}", consume);
     }
 
-    fn put(&mut self, consume: gnahc_vte::VtConsume) {
+    fn put(&mut self, consume: vte::VtConsume) {
         println!("dscput {:?}", consume);
     }
 
@@ -170,8 +331,47 @@ impl Handler for Renderer {
         println!("unhook");
     }
 
-    fn osc_dispatch(&mut self, consume: gnahc_vte::VtConsume) {
+    fn osc_dispatch(&mut self, consume: vte::VtConsume) {
         println!("osc dispatch {:?}", consume);
+    }
+}
+
+#[derive(Debug)]
+pub struct Terminal<'config> {
+    max_col: usize,
+    max_row: usize,
+    fg: Color,
+    bg: Color,
+    text_width: u32,
+    line_height: u32,
+    attr: Attribute,
+
+    buffer: Grid<Cell>,
+    write_stack: Vec<Cell>,
+    colorscheme: &'config [RGBA; 16],
+}
+
+impl<'config> Terminal<'config> {
+    pub fn new(
+        size: PhysicalSize<u32>,
+        text_width: u32,
+        line_height: u32,
+        colorscheme: &'config [RGBA; 16],
+    ) -> Self {
+        let max_col = (size.width / text_width) as usize;
+        let max_row = (size.height / line_height) as usize;
+        Self {
+            max_col,
+            max_row,
+            fg: Color::IndexBase(7),
+            bg: Color::IndexBase(0),
+            text_width,
+            line_height,
+            attr: Attribute::default(),
+            buffer: Grid::new(max_row, max_col),
+            write_stack: Vec::with_capacity(100),
+            colorscheme,
+        }
     }
 }
 
@@ -187,9 +387,10 @@ pub struct Renderer {
     text_width: u32,
     line_height: u32,
     scale: Scale,
+    dark_mode: bool,
 
     pub buffer: Grid<Cell>,
-    colorscheme: [Color; 16],
+    colorscheme: [RGBA; 16],
     buf: Vec<Cell>,
 }
 
@@ -200,7 +401,7 @@ impl Renderer {
         min_y: u32,
         max_x: u32,
         max_y: u32,
-        colorscheme: [Color; 16],
+        colorscheme: [RGBA; 16],
     ) -> Self {
         let line_height = scale.y.round() as u32;
         let text_width = (scale.x / 2.0).round() as u32;
@@ -217,25 +418,144 @@ impl Renderer {
             line_height,
             scale,
             buffer: Grid::new(max_row as usize, max_col as usize),
-            fg: Color {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
-            },
-            bg: Color {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 255,
-            },
+            fg: Color::IndexBase(7),
+            bg: Color::IndexBase(0),
             buf: Vec::with_capacity(50),
             colorscheme,
+            dark_mode: true,
         }
     }
 
     pub fn append(&mut self, data: Vec<Cell>) {
         self.buffer.input(data, |_| true);
+    }
+
+    pub fn update(&mut self) {
+        self.buffer.input(std::mem::take(&mut self.buf), |_| true);
+    }
+
+    pub fn resize(&mut self, row: usize, col: usize) {
+        self.update();
+        self.buffer.resize(row, col, |_| true);
+    }
+
+    fn set_attr(&mut self, flag: i64) {}
+
+    fn reset_graphic(&mut self) {}
+
+    fn rendition(&mut self, data: Vec<i64>) {
+        if data.len() <= 2 {
+            for i in data {
+                match &i {
+                    0..=27 => self.set_attr(i),
+                    30..=37 => {
+                        if self.dark_mode {
+                            self.fg = Color::IndexBase((i - 30) as usize);
+                        } else {
+                            self.fg = Color::IndexBase((i - 30 + 8) as usize);
+                        }
+                    }
+                    39 => self.fg = Color::IndexBase(7),
+                    40..=47 => {
+                        if self.dark_mode {
+                            self.bg = Color::IndexBase((i - 30) as usize);
+                        } else {
+                            self.bg = Color::IndexBase((i - 30 + 8) as usize);
+                        }
+                    }
+                    49 => self.bg = Color::IndexBase(0),
+                    _ => {}
+                }
+            }
+            return;
+        }
+
+        if data.len() > 2 {
+            match data.as_slice() {
+                [38, 5, index] => self.fg = Color::Index256(*index as usize),
+                [48, 5, index] => self.bg = Color::Index256(*index as usize),
+                [38, 2, rgb @ ..] => {
+                    self.fg = Color::Rgba(RGBA {
+                        r: rgb
+                            .first()
+                            .map_or_else(|| 0, |r| (*r).try_into().unwrap_or(0)),
+                        g: rgb
+                            .get(1)
+                            .map_or_else(|| 0, |g| (*g).try_into().unwrap_or(0)),
+                        b: rgb
+                            .get(2)
+                            .map_or_else(|| 0, |b| (*b).try_into().unwrap_or(0)),
+                        a: rgb
+                            .get(3)
+                            .map_or_else(|| 255, |a| (*a).try_into().unwrap_or(255)),
+                    });
+                }
+                [48, 2, rgb @ ..] => {
+                    self.bg = Color::Rgba(RGBA {
+                        r: rgb
+                            .first()
+                            .map_or_else(|| 0, |r| (*r).try_into().unwrap_or(0)),
+                        g: rgb
+                            .get(1)
+                            .map_or_else(|| 0, |g| (*g).try_into().unwrap_or(0)),
+                        b: rgb
+                            .get(2)
+                            .map_or_else(|| 0, |b| (*b).try_into().unwrap_or(0)),
+                        a: rgb
+                            .get(3)
+                            .map_or_else(|| 255, |a| (*a).try_into().unwrap_or(255)),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn execute_control(&mut self, control: ControlFunction) {
+        match control {
+            ControlFunction::Null => {}
+            ControlFunction::Enquire => {}
+            ControlFunction::Audible(Audible::Bell) => {}
+            ControlFunction::TextProc(TextProc::Backspace) => {}
+            ControlFunction::TextProc(TextProc::HTab) => {}
+            ControlFunction::TextProc(TextProc::LineFeed) => {
+                self.update();
+                self.buffer.cursor_mut().x = 0;
+                self.buffer.cursor_mut().y += 1;
+            }
+            ControlFunction::TextProc(TextProc::VTab) => {}
+            ControlFunction::TextProc(TextProc::FormFeed) => {}
+            ControlFunction::TextProc(TextProc::CarriageReturn) => {
+                self.update();
+                self.buffer.cursor_mut().x = 0;
+            }
+            ControlFunction::Graphic(GraphicCharset::LockingShift1) => {}
+            ControlFunction::Graphic(GraphicCharset::LockingShift0) => {}
+            ControlFunction::Synchronization(Synchronization::XON) => {}
+            ControlFunction::Synchronization(Synchronization::XOFF) => {}
+            ControlFunction::Cancel => {}
+            ControlFunction::Substitute => {}
+            ControlFunction::TextProc(TextProc::Index) => {}
+            ControlFunction::TextProc(TextProc::NextLine) => {}
+            ControlFunction::TextProc(TextProc::SetHTab) => {}
+            ControlFunction::TextProc(TextProc::ReverseIndex) => {
+                self.buffer.cursor_mut().y -= 1;
+            }
+            ControlFunction::Graphic(GraphicCharset::SingleShift2) => {}
+            ControlFunction::Graphic(GraphicCharset::SingleShift3) => {}
+            ControlFunction::StringTerminator => {}
+            ControlFunction::TextProc(TextProc::BackIndex) => {}
+            ControlFunction::TextProc(TextProc::SaveCursor) => {}
+            ControlFunction::TextProc(TextProc::RestoreCursor) => {}
+            ControlFunction::TextProc(TextProc::ForwardIndex) => {}
+            ControlFunction::Management(Management::Reset) => {}
+            ControlFunction::Visual(Visual::DoubleTop) => {}
+            ControlFunction::Visual(Visual::DoubleBottom) => {}
+            ControlFunction::Visual(Visual::SingleWidth) => {}
+            ControlFunction::Visual(Visual::DoubleWidth) => {}
+            ControlFunction::Illegal => {}
+            _ => unreachable!(),
+        }
     }
 }
 

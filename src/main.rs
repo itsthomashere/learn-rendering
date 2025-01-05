@@ -1,15 +1,19 @@
-use gnahc::data::Color;
-use gnahc::pty::PTY;
-use gnahc::ViewPort;
-use gnahc_vte::VTEParser;
+use harfbuzz_rs::Face;
 use image::{ImageBuffer, Rgba, RgbaImage};
+use learn_rendering::display::Display;
 use learn_rendering::renderer::{Render, Renderer};
 use rusttype::Scale;
 use std::io::Read;
 use std::time::Instant;
+use term::data::{Color, ANSI_256, RGBA};
+use term::pty::PTY;
+use term::ViewPort;
 use tracing::Level;
+use vte::VTEParser;
+use winit::event_loop::{self, EventLoop};
+use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 
-fn hex_to_color(hex: &str) -> Result<Color, String> {
+fn hex_to_color(hex: &str) -> Result<RGBA, String> {
     if !hex.starts_with('#') || (hex.len() != 7 && hex.len() != 9) {
         return Err("Invalid hex string format".to_string());
     }
@@ -23,8 +27,52 @@ fn hex_to_color(hex: &str) -> Result<Color, String> {
         255 // Default alpha to fully opaque if not provided
     };
 
-    Ok(Color { r, g, b, a })
+    Ok(RGBA { r, g, b, a })
 }
+
+// fn main() {
+//     tracing_subscriber::fmt()
+//         .with_level(true)
+//         .with_max_level(Level::TRACE)
+//         .with_ansi(true)
+//         .init();
+//     let face = Face::from_bytes(
+//         include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
+//         0,
+//     );
+//     let rt_font: rusttype::Font =
+//         rusttype::Font::try_from_bytes_and_index(&face.face_data(), face.index()).unwrap();
+//     let hb_font = harfbuzz_rs::Font::new(face);
+//
+//     let colorscheme: [Color; 16] = [
+//         hex_to_color("#000000").unwrap(),
+//         hex_to_color("#dc143c").unwrap(),
+//         hex_to_color("#32cd32").unwrap(),
+//         hex_to_color("#ffd700").unwrap(),
+//         hex_to_color("#0072bb").unwrap(),
+//         hex_to_color("#c71585").unwrap(),
+//         hex_to_color("#0072bb").unwrap(),
+//         hex_to_color("#dadada").unwrap(),
+//         hex_to_color("#808080").unwrap(),
+//         hex_to_color("#dc143c").unwrap(),
+//         hex_to_color("#32cd32").unwrap(),
+//         hex_to_color("#ffd700").unwrap(),
+//         hex_to_color("#0072bb").unwrap(),
+//         hex_to_color("#c71585").unwrap(),
+//         hex_to_color("#0072bb").unwrap(),
+//         hex_to_color("#f5f5f5").unwrap(),
+//     ];
+//
+//     let scale = Scale::uniform(32.0);
+//     let line_height = scale.y.round() as u32;
+//     let text_width = (scale.x / 2.0).round() as u32;
+//
+//     let mut display = Display::new(text_width, line_height, &colorscheme);
+//
+//     let event_loop = EventLoop::new().unwrap();
+//
+//     let _ = event_loop.run_app(&mut display);
+// }
 
 fn main() {
     tracing_subscriber::fmt()
@@ -32,13 +80,16 @@ fn main() {
         .with_max_level(Level::TRACE)
         .with_ansi(true)
         .init();
-    let hb_font = harfbuzz_rs::rusttype::create_harfbuzz_rusttype_font(
-        *include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
+    let face = Face::from_bytes(
+        include_bytes!("/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"),
         0,
-    )
-    .unwrap();
+    );
+    let rt_font: rusttype::Font =
+        rusttype::Font::try_from_vec_and_index(face.face_data().as_ref().to_owned(), face.index())
+            .unwrap();
+    let hb_font = harfbuzz_rs::Font::new(face);
 
-    let colorscheme: [Color; 16] = [
+    let colorscheme: [RGBA; 16] = [
         hex_to_color("#000000").unwrap(),
         hex_to_color("#dc143c").unwrap(),
         hex_to_color("#32cd32").unwrap(),
@@ -57,10 +108,6 @@ fn main() {
         hex_to_color("#f5f5f5").unwrap(),
     ];
 
-    let rt_font = rusttype::Font::try_from_bytes(include_bytes!(
-        "/home/dacbui308/.local/share/fonts/MapleMono-NF-Italic.ttf"
-    ))
-    .unwrap();
     let scale = Scale::uniform(32.0);
     let max_x = 1280;
     let max_y = 960;
@@ -94,7 +141,7 @@ fn main() {
                     break;
                 } else {
                     curr += n;
-                    if curr > 400 {
+                    if curr > 128 {
                         break;
                     }
                 }
@@ -112,6 +159,11 @@ fn main() {
     let current = Instant::now();
     renderer.render_all(&hb_font, &rt_font, |x, y, v, color| {
         let pixel = image.get_pixel_mut(x as u32, y as u32);
+        let color = match color {
+            Color::Rgba(rgba) => rgba,
+            Color::IndexBase(index) => colorscheme[index],
+            Color::Index256(index) => ANSI_256[index],
+        };
         let fg = Rgba([color.r, color.g, color.b, (v * color.a as f32) as u8]);
         *pixel = blend_colors(*pixel, fg, v);
     });

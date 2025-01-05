@@ -759,23 +759,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gnahc"
-version = "0.0.0"
-dependencies = [
- "libc",
- "signal-hook",
- "tracing",
-]
-
-[[package]]
-name = "gnahc_vte"
-version = "0.0.0"
-dependencies = [
- "tracing",
- "utf8parse",
-]
-
-[[package]]
 name = "gpu-alloc"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1038,17 +1021,17 @@ name = "learn-rendering"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "gnahc",
- "gnahc_vte",
  "harfbuzz_rs",
  "image",
  "log",
  "rayon",
  "rusttype",
  "simple_logger",
+ "term",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vte",
  "wgpu",
  "winit",
 ]
@@ -2233,6 +2216,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "term"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "signal-hook",
+ "tracing",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2511,6 +2503,14 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vte"
+version = "0.0.0"
+dependencies = [
+ "tracing",
+ "utf8parse",
+]
 
 [[package]]
 name = "walkdir"
