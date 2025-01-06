@@ -9,6 +9,7 @@ use vte::ansi::{
 };
 use vte::{Handler, VtConsume};
 
+#[derive(Debug)]
 pub struct Display<'config> {
     cursor: Cursor,
     saved_cursor: Option<Cursor>,
@@ -33,8 +34,8 @@ impl<'config> Display<'config> {
     ) -> Self {
         let line_height: u32 = scale.y.round() as u32;
         let text_width: u32 = (scale.x / 2.0).round() as u32;
-        let max_row = x / text_width;
-        let max_col = y / line_height;
+        let max_col = x / text_width;
+        let max_row = y / line_height;
         Self {
             cursor: Cursor::new(Line(0), Column(0)),
             saved_cursor: None,
@@ -149,7 +150,9 @@ impl<'config> Display<'config> {
                         let x = x as i32 + round_box.min.x;
                         let y = y as i32 + round_box.min.y;
 
-                        f(x, y, v, *color)
+                        if x >= 0 && y >= 0 && x <= 1280 && y <= 960 {
+                            f(x, y, v, *color)
+                        }
                     });
                 }
 
@@ -232,7 +235,10 @@ impl Handler for Display<'_> {
         match control {
             ControlFunction::Visual(v) => match v {
                 Visual::DarkMode(d) => self.term.dark_mode = d,
-                Visual::GraphicRendition(vec) => self.term.rendition(vec),
+                Visual::GraphicRendition(vec) => {
+                    self.term.update(&mut self.cursor);
+                    self.term.rendition(vec)
+                }
                 _ => {}
             },
             ControlFunction::Editing(e) => match e {
@@ -247,7 +253,7 @@ impl Handler for Display<'_> {
                         let row_len = self.term.data[line].len();
                         let col_len = self.term.data.len();
                         self.term
-                            .erase_line_range_unchecked(line, col.0..row_len, |_| true);
+                            .erase_line_range_unchecked(line, col.0 + 1..row_len, |_| true);
 
                         self.term
                             .erase_range_unchecked((line.0 + 1)..col_len, |_| true);
@@ -275,7 +281,7 @@ impl Handler for Display<'_> {
                         let row_len = self.term.data[line].len();
                         let col_len = self.term.data.len();
                         self.term
-                            .erase_line_range_unchecked(line, col.0..row_len, |c| c.erasable);
+                            .erase_line_range_unchecked(line, col.0 + 1..row_len, |c| c.erasable);
 
                         self.term
                             .erase_range_unchecked((line.0 + 1)..col_len, |c| c.erasable);
@@ -300,14 +306,14 @@ impl Handler for Display<'_> {
                         let row_len = self.term.data[self.cursor.line].len();
                         self.term.erase_line_range_unchecked(
                             self.cursor.line,
-                            self.cursor.column.0..row_len,
+                            self.cursor.column.0 + 1..row_len,
                             |_| true,
                         );
                     }
                     1 => {
                         self.term.erase_line_range_unchecked(
                             self.cursor.line,
-                            0..self.cursor.column.0,
+                            0..self.cursor.column.0 + 1,
                             |_| true,
                         );
                     }

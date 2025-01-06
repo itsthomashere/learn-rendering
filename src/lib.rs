@@ -4,6 +4,7 @@ use term::data::grids::Grid;
 use term::data::{Attribute, Cell, Color, Column, Line, RGBA};
 pub mod display;
 
+#[derive(Debug)]
 pub struct Terminal<'config> {
     scheme: &'config [RGBA; 16],
 
@@ -80,8 +81,14 @@ impl<'config> Terminal<'config> {
 
         if rendition.len() > 2 {
             match rendition.as_slice() {
-                [38, 5, index] => self.fg = Color::IndexBase(*index as usize),
-                [48, 5, index] => self.fg = Color::IndexBase(*index as usize),
+                [pre @ .., 38, 5, index] => {
+                    self.rendition(pre.to_vec());
+                    self.fg = Color::Index256(*index as usize);
+                }
+                [pre @ .., 48, 5, index] => {
+                    self.rendition(pre.to_vec());
+                    self.fg = Color::Index256(*index as usize);
+                }
                 [38, 2, rgb @ ..] => {
                     self.fg = Color::Rgba(RGBA {
                         r: rgb

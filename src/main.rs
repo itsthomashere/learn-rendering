@@ -138,7 +138,7 @@ fn main() {
                     break;
                 } else {
                     curr += n;
-                    if curr > 128 {
+                    if curr > 400 {
                         break;
                     }
                 }
@@ -154,6 +154,7 @@ fn main() {
 
     parser.parse(&buf[..curr], &mut renderer);
     let current = Instant::now();
+    // println!("{renderer:#?}");
     renderer.render(|x, y, v, color| {
         let pixel = image.get_pixel_mut(x as u32, y as u32);
         let color = match color {
