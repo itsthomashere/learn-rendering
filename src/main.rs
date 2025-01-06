@@ -1,7 +1,6 @@
 use harfbuzz_rs::Face;
 use image::{ImageBuffer, Rgba, RgbaImage};
 use learn_rendering::display::Display;
-use learn_rendering::renderer::{Render, Renderer};
 use rusttype::Scale;
 use std::io::Read;
 use std::time::Instant;
@@ -10,8 +9,6 @@ use term::pty::PTY;
 use term::ViewPort;
 use tracing::Level;
 use vte::VTEParser;
-use winit::event_loop::{self, EventLoop};
-use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 
 fn hex_to_color(hex: &str) -> Result<RGBA, String> {
     if !hex.starts_with('#') || (hex.len() != 7 && hex.len() != 9) {
@@ -111,7 +108,7 @@ fn main() {
     let scale = Scale::uniform(32.0);
     let max_x = 1280;
     let max_y = 960;
-    let mut renderer = Renderer::new(scale, 0, 0, max_x, max_y, colorscheme);
+    let mut renderer = Display::new(max_x, max_y, &hb_font, &rt_font, scale, &colorscheme);
     let line_height = scale.y.round() as u32;
     let text_width = (scale.x / 2.0).round() as u32;
     let max_col = max_x / text_width;
@@ -157,7 +154,7 @@ fn main() {
 
     parser.parse(&buf[..curr], &mut renderer);
     let current = Instant::now();
-    renderer.render_all(&hb_font, &rt_font, |x, y, v, color| {
+    renderer.render(|x, y, v, color| {
         let pixel = image.get_pixel_mut(x as u32, y as u32);
         let color = match color {
             Color::Rgba(rgba) => rgba,
