@@ -20,7 +20,7 @@ pub struct Display<'config> {
     hb_font: &'config harfbuzz_rs::Owned<Font<'static>>,
     rt_font: &'config rusttype::Font<'static>,
 
-    term: Terminal<'config>,
+    pub term: Terminal<'config>,
 }
 
 impl<'config> Display<'config> {

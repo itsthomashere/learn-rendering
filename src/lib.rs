@@ -1,8 +1,10 @@
-use std::ops::{Range, RangeBounds};
+use std::ops::Range;
 use term::data::cursor::Cursor;
 use term::data::grids::Grid;
 use term::data::{Attribute, Cell, Color, Column, Line, RGBA};
 pub mod display;
+pub mod renderer;
+pub mod text;
 
 #[derive(Debug)]
 pub struct Terminal<'config> {
@@ -13,7 +15,7 @@ pub struct Terminal<'config> {
     attr: Attribute,
 
     dark_mode: bool,
-    data: Grid<Cell>,
+    pub data: Grid<Cell>,
     pub write_stack: Vec<Cell>,
 }
 
