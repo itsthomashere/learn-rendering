@@ -1,8 +1,8 @@
 use crate::Terminal;
-use harfbuzz_rs::{Feature, Font, Tag, UnicodeBuffer};
-use rusttype::{point, GlyphId, Scale};
+use rusttype::Scale;
 use term::data::cursor::Cursor;
-use term::data::{Color, Column, Line, RGBA};
+use term::data::grids::GridIterator;
+use term::data::{Cell, Column, Line, RGBA};
 use vte::ansi::{
     Audible, ControlFunction, Editing, GraphicCharset, Management, Synchronization, TextProc,
     Visual,
@@ -13,25 +13,20 @@ use vte::{Handler, VtConsume};
 pub struct Display<'config> {
     cursor: Cursor,
     saved_cursor: Option<Cursor>,
-    text_width: u32,
-    line_height: u32,
-    scale: Scale,
-
-    hb_font: &'config harfbuzz_rs::Owned<Font<'static>>,
-    rt_font: &'config rusttype::Font<'static>,
 
     pub term: Terminal<'config>,
 }
 
 impl<'config> Display<'config> {
-    pub fn new(
-        x: u32,
-        y: u32,
-        hb_font: &'config harfbuzz_rs::Owned<Font<'static>>,
-        rt_font: &'config rusttype::Font<'static>,
-        scale: Scale,
-        colorscheme: &'config [RGBA; 16],
-    ) -> Self {
+    pub fn resize(&mut self, x: u32, y: u32, scale: Scale) {
+        let line_height: u32 = scale.y.round() as u32;
+        let text_width: u32 = (scale.x / 2.0).round() as u32;
+        let max_col = x / text_width;
+        let max_row = y / line_height;
+
+        self.term.resize(max_row as usize, max_col as usize);
+    }
+    pub fn new(x: u32, y: u32, scale: Scale, colorscheme: &'config [RGBA; 16]) -> Self {
         let line_height: u32 = scale.y.round() as u32;
         let text_width: u32 = (scale.x / 2.0).round() as u32;
         let max_col = x / text_width;
@@ -39,126 +34,14 @@ impl<'config> Display<'config> {
         Self {
             cursor: Cursor::new(Line(0), Column(0)),
             saved_cursor: None,
-            text_width,
-            line_height,
-            hb_font,
-            rt_font,
             term: Terminal::new(max_row as usize, max_col as usize, colorscheme),
-            scale,
         }
     }
 
-    pub fn render<F>(&mut self, mut f: F)
-    where
-        F: FnMut(i32, i32, f32, Color),
-    {
-        if !self.term.write_stack.is_empty() {
-            self.term.update(&mut self.cursor);
-        }
-        for (i, _) in self.term.data.iter_from(0).enumerate() {
-            self.render_line(Line(i), &mut f);
-        }
-    }
-
-    fn render_line<F>(&self, index: Line, mut f: F)
-    where
-        F: FnMut(i32, i32, f32, Color),
-    {
-        if self.term.data.len() < index.0 {
-            return;
-        }
-
-        let line = &self.term.data[index];
-        if line.len() == 0 {
-            return;
-        }
-
-        let mut data = Vec::with_capacity(line.len());
-        let mut prev_color: Option<&Color> = None;
-        let mut current = String::new();
-        'outer: for cell in line.into_iter() {
-            match prev_color {
-                Some(color) => {
-                    if color == &cell.fg {
-                        current.push(cell.c);
-                        continue 'outer;
-                    } else {
-                        data.push((std::mem::take(&mut current), prev_color.unwrap()));
-                        current.push(cell.c);
-                        prev_color = Some(&cell.fg)
-                    }
-                }
-                None => {
-                    prev_color = Some(&cell.fg);
-                    current.push(cell.c);
-                    continue;
-                }
-            }
-        }
-        data.push((current, prev_color.unwrap()));
-
-        let start_y = (index.0 + 1) as u32 * self.line_height;
-        let mut curr_col = 0;
-        for val in data {
-            let data = val.0;
-            let color = val.1;
-            let buffer = UnicodeBuffer::new()
-                .add_str(&data)
-                .guess_segment_properties();
-
-            let glyph_buffer = harfbuzz_rs::shape(
-                self.hb_font,
-                buffer,
-                &[
-                    Feature::new(Tag::new('l', 'i', 'g', 'a'), 1, 0..),
-                    Feature::new(Tag::new('c', 'a', 'l', 't'), 1, 0..),
-                ],
-            );
-            let positions = glyph_buffer.get_glyph_positions();
-            let infos = glyph_buffer.get_glyph_infos();
-            let mut iter = positions.iter().zip(infos).peekable();
-            while let Some((position, info)) = iter.next() {
-                let scale_factor = match iter.peek() {
-                    Some((_, next_info)) => next_info.cluster - info.cluster,
-                    None => 1,
-                };
-                let x_offset = position.x_offset as f32 / 64.0;
-                let y_offset = position.y_offset as f32 / 64.0;
-                let glyph_id = GlyphId(info.codepoint as u16);
-
-                let x = (curr_col * self.text_width) as f32 + x_offset;
-                let y = y_offset + start_y as f32;
-
-                let scale_factor = match scale_factor > 1 {
-                    true => 1.0 / (1.0 + scale_factor as f32 * 0.1),
-                    false => 1.0,
-                };
-
-                let scale = Scale {
-                    x: self.scale.x * scale_factor,
-                    y: self.scale.y * scale_factor,
-                };
-
-                let glyph = self
-                    .rt_font
-                    .glyph(glyph_id)
-                    .scaled(scale)
-                    .positioned(point(x, y));
-
-                if let Some(round_box) = glyph.pixel_bounding_box() {
-                    glyph.draw(|x, y, v| {
-                        let x = x as i32 + round_box.min.x;
-                        let y = y as i32 + round_box.min.y;
-
-                        if x >= 0 && y >= 0 && x <= 1280 && y <= 960 {
-                            f(x, y, v, *color)
-                        }
-                    });
-                }
-
-                curr_col += 1;
-            }
-        }
+    pub fn grid_iter(&self, start: Line) -> GridIterator<Cell> {
+        self.term
+            .data
+            .grid_iter((start, Column(0)), (Line(80), Column(132)))
     }
 
     fn execute_control(&mut self, control: ControlFunction) {

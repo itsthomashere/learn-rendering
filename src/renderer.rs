@@ -1,7 +1,8 @@
 use crate::text::{GlyphVertex, TextGenerator};
+use rusttype::Scale;
 use term::data::{Attribute, Color, Column, GridCell, Line, PositionedCell, ANSI_256, RGBA};
 
-pub struct Renderer {
+pub struct Renderer<'config> {
     font_loader: TextGenerator,
     max_x: u32,
     max_y: u32,
@@ -9,30 +10,47 @@ pub struct Renderer {
     cell_height: u32,
     max_cell: usize,
     line_offset: Line,
-    colorscheme: [RGBA; 16],
+    colorscheme: &'config [RGBA; 16],
 }
 
-impl Renderer {
-    /// Render the grid
-    ///
-    /// * `data`: grid data
-    pub fn render<I, O>(&mut self, data: I)
-    where
-        I: Iterator,
-        I::Item: for<'a> PositionedCell<&'a O>,
-        O: GridCell,
-    {
-        self.prepare_render(data);
+impl<'config> Renderer<'config> {
+    pub fn resize(&mut self, max_x: u32, max_y: u32) {
+        self.max_x = max_x;
+        self.max_y = max_y;
     }
+    pub fn new(max_x: u32, max_y: u32, scale: Scale, colorscheme: &'config [RGBA; 16]) -> Self {
+        let cell_height: u32 = scale.y.round() as u32;
+        let cell_width: u32 = (scale.x / 2.0).round() as u32;
+        let max_col = max_x / cell_width;
+        let max_row = max_y / cell_height;
+        Self {
+            font_loader: TextGenerator::new(cell_width, cell_height, scale),
+            max_x,
+            max_y,
+            cell_width,
+            cell_height,
+            max_cell: (max_col * max_row) as usize,
+            line_offset: Line(0),
+            colorscheme,
+        }
+    }
+    // pub fn render<I, O>(&mut self, data: I)
+    // where
+    //     I: Iterator,
+    //     I::Item: for<'a> PositionedCell<&'a O>,
+    //     O: GridCell,
+    // {
+    //     self.prepare_render(data);
+    // }
 
     /// Load the cells into the buffer and prepare to render
     ///
     /// * `data`:
-    fn prepare_render<I, O>(&mut self, data: I) -> Vec<GlyphVertex>
+    pub fn prepare_render<'a, I, O>(&self, data: I) -> Vec<GlyphVertex>
     where
         I: Iterator,
-        I::Item: for<'a> PositionedCell<&'a O>,
-        O: GridCell,
+        I::Item: PositionedCell<&'a O>,
+        O: GridCell + 'a,
     {
         let mut result = Vec::with_capacity(self.max_cell);
         let mut current_line: Option<Line> = None;
@@ -70,6 +88,8 @@ impl Renderer {
                 || last_attribute.as_ref().is_some_and(|a| a != attr)
             {
                 result.extend(self.font_loader.load(
+                    self.max_x,
+                    self.max_y,
                     std::mem::take(&mut current_group),
                     last_attribute.take().unwrap(),
                     self.to_rgba(last_fg.take().unwrap()),
@@ -91,6 +111,8 @@ impl Renderer {
 
         if !current_group.is_empty() {
             result.extend(self.font_loader.load(
+                self.max_x,
+                self.max_y,
                 std::mem::take(&mut current_group),
                 last_attribute.take().unwrap(),
                 self.to_rgba(last_fg.take().unwrap()),
