@@ -187,19 +187,19 @@ impl TextGenerator {
                 },
             };
 
-            let gl_rect = Rect {
-                min: origin
-                    + (vector(
-                        screen_rect.min.x / max_x as f32 - 0.5,
-                        1.0 - screen_rect.min.y / max_y as f32 - 0.5,
-                    )) * 2.0,
-                max: origin
-                    + (vector(
-                        screen_rect.max.x / max_x as f32 - 0.5,
-                        1.0 - screen_rect.max.y / max_y as f32 - 0.5,
-                    )) * 2.0,
-            };
-
+            // let gl_rect = Rect {
+            //     min: origin
+            //         + (vector(
+            //             screen_rect.min.x / max_x as f32 - 0.5,
+            //             1.0 - screen_rect.min.y / max_y as f32 - 0.5,
+            //         )) * 2.0,
+            //     max: origin
+            //         + (vector(
+            //             screen_rect.max.x / max_x as f32 - 0.5,
+            //             1.0 - screen_rect.max.y / max_y as f32 - 0.5,
+            //         )) * 2.0,
+            // };
+            //
             let uv_rect = glyph
                 .pixel_bounding_box()
                 .map(|val| Rect {
@@ -216,7 +216,7 @@ impl TextGenerator {
                 })
                 .unwrap_or(screen_rect);
 
-            let screen_rect = gl_rect;
+            // let screen_rect = gl_rect;
             let bg = [
                 bg.r as f32 / 255.0,
                 bg.g as f32 / 255.0,

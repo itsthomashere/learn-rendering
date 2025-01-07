@@ -1,39 +1,52 @@
-struct VertexInput {
-    @location(0) position: vec2<f32>,  // Vertex position in pixels
-    @location(1) tex_coords: vec2<f32>, // Texture coordinates [0, 1]
-    @location(2) bg_color: vec4<f32>,   // Background color (RGBA)
-    @location(3) fg_color: vec4<f32>,   // Foreground color (RGBA)
+struct GlyphVertex {
+    @location(0) position: vec2<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) bg: vec4<f32>,
+    @location(3) fg: vec4<f32>,
 };
 
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>, // Output position for clipping
-    @location(0) tex_coords: vec2<f32>,         // Passed to fragment shader
-    @location(1) bg_color: vec4<f32>,           // Background color
-    @location(2) fg_color: vec4<f32>,           // Foreground color
+struct VOut {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) tex_coords: vec2<f32>,
+    @location(1) bg: vec4<f32>,
+    @location(2) fg: vec4<f32>,
 };
 
+
+struct ShaderUniform {
+  foreground_text_hsb: vec3<f32>,
+  milliseconds: u32,
+  projection: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: ShaderUniform;
+
+@group(1) @binding(0) var atlas_linear_tex: texture_2d<f32>;
+@group(1) @binding(1) var atlas_linear_sampler: sampler;
+
+@group(2) @binding(0) var atlas_nearest_tex: texture_2d<f32>;
+@group(2) @binding(1) var atlas_nearest_sampler: sampler;
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(model.position, 0.0, 1.0);
+fn vs_main(
+    model: GlyphVertex,
+) -> VOut {
+    var out: VOut;
     out.tex_coords = model.tex_coords;
-    out.bg_color = model.bg_color;
-    out.fg_color = model.fg_color;
+    out.fg = model.fg;
+    out.clip_position = uniforms.projection * vec4<f32>(model.position, 0.0, 1.0);
     return out;
 }
 
-
-struct FragmentInput {
-    @location(0) tex_coords: vec2<f32>, // Texture coordinates
-    @location(1) bg_color: vec4<f32>,   // Background color (RGBA)
-    @location(2) fg_color: vec4<f32>,   // Foreground color (RGBA)
-};
-
-
 @fragment
-fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
+fn fs_main(in: VOut) -> @location(0) vec4<f32> {
+    var color: vec4<f32>;
+    var linear_tex: vec4<f32> = textureSample(atlas_linear_tex, atlas_linear_sampler, in.tex_coords);
+    var nearest_tex: vec4<f32> = textureSample(atlas_nearest_tex, atlas_nearest_sampler, in.tex_coords);
 
-    return input.fg_color;
+    color = in.fg;
+    color.a = nearest_tex.a;
+
+    return color;
 }
 

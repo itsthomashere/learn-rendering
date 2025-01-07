@@ -12,7 +12,7 @@ use term::pty::PTY;
 use tokio::runtime::Runtime;
 use vte::VTEParser;
 use wgpu::include_wgsl;
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::util::{BufferInitDescriptor, DeviceExt, RenderEncoder};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -39,6 +39,10 @@ pub struct DisplayState {
     pipe_line: wgpu::RenderPipeline,
     size: PhysicalSize<u32>,
     config: wgpu::SurfaceConfiguration,
+    shader_uniform_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_nearest_sampler: wgpu::Sampler,
+    texture_linear_sampler: wgpu::Sampler,
     buffer: wgpu::Buffer,
     num_vertices: usize,
 }
@@ -47,7 +51,7 @@ impl DisplayState {
     pub fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
@@ -91,7 +95,7 @@ impl DisplayState {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
             height: size.height,
@@ -104,15 +108,74 @@ impl DisplayState {
         surface.configure(&device, &config);
 
         let main_shader = include_wgsl!("./shader.wgsl");
-        let fragment_shader = include_wgsl!("./shader.wgsl");
-
         let vs = device.create_shader_module(main_shader);
-        let fs = device.create_shader_module(fragment_shader);
+
+        let shader_uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("ShaderUniform bind group layout"),
+            });
+
+        let texture_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture bind group layout"),
+            });
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[
+                    &shader_uniform_bind_group_layout,
+                    &texture_bind_group_layout,
+                    &texture_bind_group_layout,
+                ],
                 push_constant_ranges: &[],
             });
 
@@ -132,24 +195,22 @@ impl DisplayState {
                 alpha_to_coverage_enabled: false,
             },
             fragment: Some(wgpu::FragmentState {
-                module: &fs,
+                module: &vs,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
+
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 polygon_mode: wgpu::PolygonMode::Fill,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -174,6 +235,10 @@ impl DisplayState {
             config,
             buffer,
             num_vertices: 0,
+            shader_uniform_bind_group_layout,
+            texture_bind_group_layout,
+            texture_nearest_sampler,
+            texture_linear_sampler,
         }
     }
 
@@ -182,7 +247,9 @@ impl DisplayState {
         self.buffer = self.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("screen buffer"),
             contents: bytemuck::cast_slice(&buffer),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::VERTEX,
         });
     }
 
@@ -200,6 +267,68 @@ impl DisplayState {
             });
 
         {
+            let uniform_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("uniform group"),
+                layout: &self.shader_uniform_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                }],
+            });
+
+            let texture_size = wgpu::Extent3d {
+                width: self.size.width,
+                height: self.size.height,
+                depth_or_array_layers: 1,
+            };
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("texture"),
+                size: texture_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba32Float,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+
+            let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("texture view for atlas"),
+                format: Some(wgpu::TextureFormat::Rgba32Float),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                ..Default::default()
+            });
+
+            let atlas_linear = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("al bind group"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_linear_sampler),
+                    },
+                ],
+            });
+
+            let atlas_nearest = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("an bind group"),
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_nearest_sampler),
+                    },
+                ],
+            });
+
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -221,6 +350,9 @@ impl DisplayState {
             });
 
             render_pass.set_pipeline(&self.pipe_line);
+            render_pass.set_bind_group(0, &uniform_group, &[]);
+            render_pass.set_bind_group(1, &atlas_linear, &[]);
+            render_pass.set_bind_group(2, &atlas_nearest, &[]);
             render_pass.set_vertex_buffer(0, self.buffer.slice(..));
             render_pass.draw(0..self.num_vertices as u32, 0..1);
         }
@@ -281,6 +413,7 @@ impl<'config> App<'config> {
 
         let render = self.renderer.as_ref().unwrap();
         let buffer = render.prepare_render(self.display.as_ref().unwrap().grid_iter(Line(0)));
+        println!("{:?}", buffer);
         self.state
             .as_mut()
             .unwrap()
@@ -343,10 +476,10 @@ impl ApplicationHandler for App<'_> {
             winit::event::WindowEvent::Resized(new_size) => self.resize(new_size),
             winit::event::WindowEvent::RedrawRequested => match state.render() {
                 Ok(_) => {
-                    println!("rendered");
+                    // println!("rendered");
                 }
                 Err(e) => {
-                    println!("error: {e}");
+                    // println!("error: {e}");
                     match e {
                         wgpu::SurfaceError::Timeout => {}
                         wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost => {
