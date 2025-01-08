@@ -32,8 +32,6 @@ var samplerr: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texture_color = textureSample(tex, samplerr, in.tex_coords).r;
-
-    return in.fg * vec4(1.0, 1.0, 1.0, texture_color);
+    let texture_color = textureSample(tex, samplerr, in.tex_coords);
+    return vec4(texture_color.x, texture_color.x, texture_color.x, 1.0);
 }
-

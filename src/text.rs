@@ -1,6 +1,6 @@
 use harfbuzz_rs::{shape, Feature, Font, Tag, UnicodeBuffer};
 use rusttype::gpu_cache::Cache;
-use rusttype::{point, vector, Font as RTFont, GlyphId, Rect, Scale};
+use rusttype::{point, Font as RTFont, GlyphId, Point, Rect, Scale};
 use term::data::{Attribute, Column, Line, RGBA};
 
 #[repr(C)]
@@ -119,8 +119,8 @@ impl TextGenerator {
     #[allow(clippy::too_many_arguments)]
     fn load_internal(
         &self,
-        max_x: u32,
-        max_y: u32,
+        width: u32,
+        height: u32,
         hb: &harfbuzz_rs::Owned<Font<'static>>,
         rt: &RTFont<'static>,
         text: impl AsRef<str>,
@@ -148,7 +148,7 @@ impl TextGenerator {
         let position = buf.get_glyph_positions();
         let info = buf.get_glyph_infos();
         let mut start_x = col.0 as f32 * cell_witdh as f32;
-        let start_y = line.0 as f32 * cell_witdh as f32;
+        let mut start_y = line.0 as f32 * cell_witdh as f32;
 
         let mut iter = position.iter().zip(info).peekable();
 
@@ -169,61 +169,53 @@ impl TextGenerator {
 
             let x_offset = position.x_offset as f32 / 64.0;
             let y_offset = position.y_offset as f32 / 64.0;
+            let x_advance = position.x_advance as f32 / 64.0;
+            let y_advance = position.y_advance as f32 / 64.0;
             let x = start_x + x_offset;
             let y = y_offset + start_y;
 
             let glyph = rt.glyph(glyph_id).scaled(scale).positioned(point(x, y));
 
-            let origin = point(0.0, 0.0);
-
-            let screen_rect = Rect {
-                min: rusttype::Point {
-                    x: start_x / max_x as f32,
-                    y: start_y / max_y as f32,
+            let screen_rect = pixels_to_vertex_metrics(
+                Rect {
+                    min: rusttype::Point {
+                        x: start_x,
+                        y: start_y,
+                    },
+                    max: rusttype::Point {
+                        x: (start_x + cell_witdh as f32),
+                        y: (start_y + cell_height as f32),
+                    },
                 },
-                max: rusttype::Point {
-                    x: (start_x + cell_witdh as f32) / max_x as f32,
-                    y: (start_y + cell_height as f32) / max_y as f32,
-                },
-            };
-
-            let gl_rect = Rect {
-                min: origin
-                    + (vector(
-                        screen_rect.min.x / max_x as f32 - 0.5,
-                        1.0 - screen_rect.min.y / max_y as f32 - 0.5,
-                    )) * 2.0,
-                max: origin
-                    + (vector(
-                        screen_rect.max.x / max_x as f32 - 0.5,
-                        1.0 - screen_rect.max.y / max_y as f32 - 0.5,
-                    )) * 2.0,
-            };
+                width as f32,
+                height as f32,
+            );
 
             let uv_rect = glyph
                 .pixel_bounding_box()
-                .map(|val| Rect {
-                    min: origin
-                        + (vector(
-                            val.min.x as f32 / max_x as f32 - 0.5,
-                            1.0 - val.min.y as f32 / max_y as f32 - 0.5,
-                        )) * 2.0,
-                    max: origin
-                        + (vector(
-                            val.max.x as f32 / max_x as f32 - 0.5,
-                            1.0 - val.max.y as f32 / max_y as f32 - 0.5,
-                        )) * 2.0,
+                .map(|old| {
+                    pixels_to_vertex_metrics(
+                        Rect {
+                            min: point(old.min.x as f32, old.min.y as f32),
+                            max: point(old.max.x as f32, old.max.y as f32),
+                        },
+                        width as f32,
+                        height as f32,
+                    )
                 })
                 .unwrap_or(screen_rect);
 
-            let screen_rect = gl_rect;
+            println!("info: {info:?}");
+            println!("position: {position:?}");
+            println!("screen rect {screen_rect:?}");
+            println!("uv rect {uv_rect:?}");
+
             let bg = [
                 bg.r as f32 / 255.0,
                 bg.g as f32 / 255.0,
                 bg.b as f32 / 255.0,
                 bg.a as f32 / 255.0,
             ];
-
             let fg = [
                 fg.r as f32 / 255.0,
                 fg.g as f32 / 255.0,
@@ -232,46 +224,64 @@ impl TextGenerator {
             ];
             res.extend(vec![
                 GlyphVertex {
-                    position: [screen_rect.min.x, screen_rect.min.y],
-                    tex_coords: [uv_rect.min.x as f32, uv_rect.max.y as f32],
+                    position: [screen_rect.min.x, screen_rect.max.y],
+                    tex_coords: [uv_rect.min.x, uv_rect.max.y],
                     bg,
                     fg,
                 },
                 GlyphVertex {
                     position: [screen_rect.min.x, screen_rect.min.y],
-                    tex_coords: [uv_rect.min.x as f32, uv_rect.min.y as f32],
+                    tex_coords: [uv_rect.min.x, uv_rect.min.y],
                     bg,
                     fg,
                 },
                 GlyphVertex {
                     position: [screen_rect.max.x, screen_rect.min.y],
-                    tex_coords: [uv_rect.max.x as f32, uv_rect.min.y as f32],
+                    tex_coords: [uv_rect.max.x, uv_rect.min.y],
                     bg,
                     fg,
                 },
                 GlyphVertex {
                     position: [screen_rect.max.x, screen_rect.min.y],
-                    tex_coords: [uv_rect.max.x as f32, uv_rect.min.y as f32],
+                    tex_coords: [uv_rect.max.x, uv_rect.min.y],
                     bg,
                     fg,
                 },
                 GlyphVertex {
                     position: [screen_rect.max.x, screen_rect.max.y],
-                    tex_coords: [uv_rect.max.x as f32, uv_rect.max.y as f32],
+                    tex_coords: [uv_rect.max.x, uv_rect.max.y],
                     bg,
                     fg,
                 },
                 GlyphVertex {
                     position: [screen_rect.min.x, screen_rect.max.y],
-                    tex_coords: [uv_rect.min.x as f32, uv_rect.max.y as f32],
+                    tex_coords: [uv_rect.min.x, uv_rect.max.y],
                     bg,
                     fg,
                 },
             ]);
 
-            start_x += cell_witdh as f32;
+            start_x += cell_witdh as f32 + x_advance;
         }
 
         res
+    }
+}
+
+fn pixels_to_vertex_metrics(input: Rect<f32>, width: f32, height: f32) -> Rect<f32> {
+    let normalized_min_x = (input.min.x / width) * 2.0 - 1.0;
+    let normalized_min_y = 1.0 - (input.min.y / height) * 2.0; // Invert y-axis
+    let normalized_max_x = (input.max.x / width) * 2.0 - 1.0;
+    let normalized_max_y = 1.0 - (input.max.y / height) * 2.0; // Invert y-axis
+
+    Rect {
+        min: Point {
+            x: normalized_min_x,
+            y: normalized_min_y,
+        },
+        max: Point {
+            x: normalized_max_x,
+            y: normalized_max_y,
+        },
     }
 }
